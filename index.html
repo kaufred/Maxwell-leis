@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Campo Magnético Interativo</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { margin: 0; font-family: sans-serif; background-color: #111; color: #fff; overflow: hidden; }
+        canvas { display: block; }
+        
+        /* 2. Adicionando estilos para o balão de fala e botões */
+        .speech-bubble {
+            position: relative;
+            background: #1e293b; /* slate-800 */
+            border-radius: .8em;
+            padding: 12px 18px;
+            color: white;
+            z-index: 10;
+        }
+        .speech-bubble:after {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            width: 0;
+            height: 0;
+            border: 15px solid transparent;
+            border-right-color: #1e293b; /* slate-800 */
+            border-left: 0;
+            margin-top: -15px;
+            margin-left: -15px;
+            z-index: 10;
+        }
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        /* Estilo para a equação ficar destacada */
+        .equation {
+            display: block;
+            text-align: center;
+            font-size: 1.1em;
+            font-family: 'Lucida Console', monospace;
+            color: #f59e0b; /* amber-500 */
+            padding: 8px;
+            background-color: rgba(0,0,0,0.3);
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="absolute top-5 right-5 w-full max-w-md z-10 p-4">
+    <div class="relative w-full flex flex-col items-start gap-4 bg-slate-900/80 p-6 rounded-xl shadow-lg ring-1 ring-cyan-500/20 backdrop-blur-sm">
+        
+        <div class="flex items-center gap-4 w-full">
+            <div class="flex-shrink-0 w-20 h-20 bg-gradient-to-br from-cyan-400 to-cyan-600 rounded-full flex items-center justify-center relative ring-2 ring-white/30 shadow-lg">
+                <div class="absolute w-12 h-12 bg-white/20 rounded-full -top-1 -left-1"></div>
+                <div class="flex gap-3 relative">
+                    <div class="w-4 h-4 bg-white rounded-full flex items-center justify-center"><div class="w-2 h-2 bg-slate-800 rounded-full"></div></div>
+                    <div class="w-4 h-4 bg-white rounded-full flex items-center justify-center"><div class="w-2 h-2 bg-slate-800 rounded-full"></div></div>
+                </div>
+                <div classs="absolute bottom-4 w-5 h-1 bg-slate-800 rounded-full transition-all duration-100"></div>
+            </div>
+            <div class="flex flex-col">
+                <h3 class="text-2xl font-bold text-cyan-300">Prof. Maxwell</h3>
+                <p class="text-cyan-200/80 text-sm">Especialista em Magnetismo</p>
+            </div>
+        </div>
+
+        <div class="flex flex-col gap-4 w-full mt-4">
+            <div class="speech-bubble">
+                <p id="explanation-title" class="font-bold text-cyan-200 text-lg">...</p>
+                <div id="explanation-text" class="text-sm text-slate-200 mt-2"></div>
+            </div>
+        </div>
+
+        <div class="flex justify-between items-center w-full pt-4 border-t border-cyan-500/20">
+            <button id="prev-btn" class="bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 font-semibold py-2 px-4 rounded-lg transition-all">
+                Anterior
+            </button>
+            <span id="step-counter" class="text-sm font-semibold text-cyan-200">Passo 1 / 4</span>
+            <button id="next-btn" class="bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30 font-semibold py-2 px-4 rounded-lg transition-all">
+                Próximo
+            </button>
+        </div>
+    </div>
+    <p class="text-center text-slate-400 text-sm mt-4">Arraste o ímã e use o mouse para girar/zoom na cena.</p>
+</div>
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { DragControls } from 'three/addons/controls/DragControls.js';
+
+    // --- Variáveis Globais (da sua simulação) ---
+    let scene, camera, renderer, orbitControls, dragControls;
+    let magnet, poleNorth, poleSouth;
+    let arrowGroup;
+    const draggables = [];
+    const posN = new THREE.Vector3();
+    const posS = new THREE.Vector3();
+    const vecN = new THREE.Vector3();
+    const vecS = new THREE.Vector3();
+    const totalField = new THREE.Vector3();
+
+    // --- Variáveis Globais (da Explicação) ---
+    let currentStep = 0;
+    
+    // *** ALTERAÇÃO AQUI: Adicionadas as equações em HTML ***
+    const explanations = [
+        {
+            title: "1ª Lei: Gauss (Elétrica)",
+            text: "Esta lei diz que campos elétricos 'nascem' em cargas positivas e 'morrem' em negativas. Ela confirma que cargas elétricas isoladas existem."
+                  + "<span class='equation'>∮ E ⋅ dA = Q / ε₀</span>"
+        },
+        {
+            title: "2ª Lei: Gauss (Magnética) - É O QUE VOCÊ VÊ!",
+            text: "Esta é a simulação! Ela diz que monopolos magnéticos NÃO existem. As linhas de campo (as setas) sempre formam loops fechados. O fluxo total é sempre ZERO."
+                  + "<span class='equation'>∮ B ⋅ dA = 0</span>"
+        },
+        {
+            title: "3ª Lei: Faraday (Indução)",
+            text: "Quando você ARRASTA o ímã, você muda o campo magnético. Essa MUDANÇA (variação do fluxo) cria um campo elétrico. É assim que geradores funcionam!"
+                  + "<span class='equation'>∮ E ⋅ dl = -dΦB/dt</span>"
+        },
+        {
+            title: "4ª Lei: Ampère-Maxwell",
+            text: "Campos magnéticos são criados por correntes elétricas (eletroímãs) ou por campos elétricos variáveis. O seu ímã funciona por correntes microscópicas (spins)."
+                  + "<span class='equation'>∮ B ⋅ dl = μ₀I + μ₀ε₀(dΦE/dt)</span>"
+        }
+    ];
+
+    // --- Elementos da UI ---
+    const prevBtn = document.getElementById('prev-btn');
+    const nextBtn = document.getElementById('next-btn');
+    const stepCounter = document.getElementById('step-counter');
+    const explanationTitle = document.getElementById('explanation-title');
+    const explanationText = document.getElementById('explanation-text');
+
+    /**
+     * Atualiza o painel de explicação
+     */
+    function updateExplanation() {
+        const step = explanations[currentStep];
+        
+        explanationTitle.textContent = step.title;
+        
+        // *** ALTERAÇÃO AQUI: de .textContent para .innerHTML ***
+        // Isso permite que o HTML dentro da string (como <br> e <strong>) seja renderizado
+        explanationText.innerHTML = step.text; 
+        
+        stepCounter.textContent = `Passo ${currentStep + 1} / ${explanations.length}`;
+
+        // Habilitar/desabilitar botões
+        prevBtn.disabled = (currentStep === 0);
+        nextBtn.disabled = (currentStep === explanations.length - 1);
+    }
+
+    /**
+     * Inicializa a cena 3D (câmera, luzes, renderizador)
+     */
+    function init() {
+        // Cena
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a1a);
+
+        // Câmera
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(6, 6, 12);
+
+        // Renderizador
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement); // Adiciona o canvas ao body
+
+        // Luzes
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+        dirLight.position.set(5, 10, 7.5);
+        scene.add(dirLight);
+
+        // Controles de Câmera (Órbita)
+        orbitControls = new OrbitControls(camera, renderer.domElement);
+        orbitControls.enableDamping = true;
+
+        // Eixos (ajuda a visualizar o espaço)
+        scene.add(new THREE.AxesHelper(5));
+
+        // --- Criar os Elementos da Simulação ---
+        createMagnet();
+        createFieldArrows();
+        setupDragControls();
+
+        // --- Configurar UI de Explicação ---
+        prevBtn.addEventListener('click', () => {
+            if (currentStep > 0) {
+                currentStep--;
+                updateExplanation();
+            }
+        });
+
+        nextBtn.addEventListener('click', () => {
+            if (currentStep < explanations.length - 1) {
+                currentStep++;
+                updateExplanation();
+            }
+        });
+        
+        // Carregar a primeira explicação
+        updateExplanation();
+
+        // Iniciar o loop de animação
+        animate();
+    }
+
+    /**
+     * Cria o ímã de barra (Norte/Sul)
+     */
+    function createMagnet() {
+        magnet = new THREE.Group();
+        const poleHeight = 1.5;
+        const poleGeo = new THREE.BoxGeometry(0.5, poleHeight, 0.5);
+        
+        // Polo Norte (Vermelho)
+        const northMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+        poleNorth = new THREE.Mesh(poleGeo, northMat);
+        poleNorth.position.y = poleHeight / 2; // Metade para cima
+        
+        // Polo Sul (Azul)
+        const southMat = new THREE.MeshStandardMaterial({ color: 0x0000ff });
+        poleSouth = new THREE.Mesh(poleGeo, southMat);
+        poleSouth.position.y = -poleHeight / 2; // Metade para baixo
+
+        magnet.add(poleNorth);
+        magnet.add(poleSouth);
+        
+        scene.add(magnet);
+        draggables.push(magnet); // Adiciona o ímã ao array de objetos arrastáveis
+    }
+
+    /**
+     * Cria a grade de setas (bússolas)
+     */
+    function createFieldArrows() {
+        arrowGroup = new THREE.Group();
+        const gridSize = 8;
+        const spacing = 1.5;
+        const arrowLength = 0.5;
+
+        for (let x = -gridSize / 2; x <= gridSize / 2; x++) {
+            for (let y = -gridSize / 2; y <= gridSize / 2; y++) {
+                for (let z = -gridSize / 2; z <= gridSize / 2; z++) {
+                    // Não desenha setas dentro do ímã (só para limpar)
+                    if (x === 0 && y === 0 && z === 0) continue;
+
+                    const pos = new THREE.Vector3(x * spacing, y * spacing, z * spacing);
+                    const dir = new THREE.Vector3(0, 1, 0); // Direção inicial
+                    
+                    const arrow = new THREE.ArrowHelper(dir, pos, arrowLength, 0x00ff00, 0.2, 0.1);
+                    arrowGroup.add(arrow);
+                }
+            }
+        }
+        // **CORREÇÃO FEITA:** Esta linha estava faltando no seu código original
+        scene.add(arrowGroup); 
+    }
+
+    /**
+     * Configura os controles de arrastar
+     */
+    function setupDragControls() {
+        dragControls = new DragControls(draggables, camera, renderer.domElement);
+
+        // Desativa a câmera (OrbitControls) enquanto arrasta o ímã
+        dragControls.addEventListener('dragstart', function () {
+            orbitControls.enabled = false;
+        });
+        dragControls.addEventListener('dragend', function () {
+            orbitControls.enabled = true;
+        });
+    }
+
+    /**
+     * Atualiza a direção de todas as setas com base na posição do ímã
+     */
+    function updateMagneticField() {
+        // Pega a posição GLOBAL dos polos (mesmo que o ímã gire)
+        poleNorth.getWorldPosition(posN);
+        poleSouth.getWorldPosition(posS);
+
+        // Itera por todas as setas no grupo
+        arrowGroup.children.forEach(arrow => {
+            const p = arrow.position;
+
+            // Calcula o vetor do Polo Norte até a seta
+            vecN.subVectors(p, posN);
+            // Calcula o vetor do Polo Sul até a seta
+            vecS.subVectors(p, posS);
+
+            // Calcula a força (simplificada como 1/r^2)
+            // +1 para o Norte (fonte), -1 para o Sul (sumidouro)
+            const strengthN = 1.0 / (vecN.lengthSq() + 0.1); // +0.1 evita divisão por zero
+            const strengthS = -1.0 / (vecS.lengthSq() + 0.1);
+            
+            // Normaliza os vetores e aplica a força
+            vecN.normalize().multiplyScalar(strengthN);
+            vecS.normalize().multiplyScalar(strengthS);
+
+            // Soma os dois campos (vetorialmente)
+            totalField.addVectors(vecN, vecS);
+            
+            // Define a nova direção da seta
+            arrow.setDirection(totalField.normalize());
+        });
+    }
+
+    /**
+     * Loop de Animação (executa a cada quadro)
+     */
+    function animate() {
+        requestAnimationFrame(animate);
+
+        // Atualiza a câmera
+        orbitControls.update();
+
+        // ATUALIZA A FÍSICA: recalcula o campo a cada quadro
+        updateMagneticField();
+
+        // Renderiza a cena
+        renderer.render(scene, camera);
+    }
+
+    // --- Event Listener para Redimensionar Janela ---
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+    
+    // --- Iniciar ---
+    init();
+
+</script>
+</body>
+</html>
